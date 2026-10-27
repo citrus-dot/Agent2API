@@ -1,3 +1,6 @@
+// ⚠️ 逆向参考样本（NOT RUNTIME CODE）：从 Loomy 客户端安装包提取的材料，仅供
+// server/src/server/core/providers/loomy/checkin.rs 的协议调查对照（依赖的
+// channel/channel-store.js 等模块不在本仓库，无任何运行路径引用）。
 import { ensureChannelAttribution } from './channel/channel-store.js'
 
 function normalizeRecordType(value) {

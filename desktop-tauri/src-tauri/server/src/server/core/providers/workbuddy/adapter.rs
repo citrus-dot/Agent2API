@@ -79,6 +79,31 @@ const QUOTA_LIMIT_CODE: i64 = 6004;
 /// 11-128 透传给客户端时追加的敏感词指引（避免被误当成普通频率限制）
 const WAF_HINT: &str = "；提示词可能命中上游敏感词，请检查提示词";
 
+/// WorkBuddy 账号级限制的业务码（借鉴 wb2api `IsAccountRestricted`）：
+/// 429 + code 11140 + 文案 `request illegal` → 账号本身被限制，冷却轮换。
+///
+/// ⚠️ 必须与文案**双条件**判定，两条单向都会误伤：
+///   - 只看文案：`request illegal` 同样出现在 11-128 通道校验失败里
+///     （`{"code":"11-128","msg":"request illegal"}`）—— 健康账号会被硬禁用；
+///   - 只看 code：11140 也承载模型级限流文案（"The model provider is
+///     rate-limiting requests."）—— 那种场景必须保持既有 QuotaLimited 语义。
+const ACCOUNT_RESTRICTED_CODE: i64 = 11140;
+const ACCOUNT_RESTRICTED_MSG: &str = "request illegal";
+
+/// 排队准入的业务码（借鉴 wb2api 0f0a708）：429 + code 6020 +
+/// `queue.waiting.title` —— 热门模型对 free 档用户的**排队准入**，
+/// `data.retry_after`（秒）是上游明示的等待时长，语义是「等几秒再试」，
+/// 与 6004 的按窗限流完全不同：冷却必须按上游给的几秒算，落进通用 429
+/// 的 10 分钟兜底会把排队放大成全池连环冷却（wb2api 修复前的实证故障）。
+/// 判定只认 code：6020/6021 是无歧义业务码，不需要文案旁证
+///（与 11140 必须双条件的处境相反）。
+const QUEUE_WAITING_CODE: i64 = 6020;
+
+/// 渠道级容量满载的业务码（借鉴 wb2api ErrUpstreamBusy）：429 + code 6021 +
+/// `queue.full.title` —— 上游推理集群排队队列打满，与具体账号无关。
+/// 换号在任何时刻都会撞同一堵墙：正确处置是**不罚号、不轮转**，原样透传。
+const QUEUE_FULL_CODE: i64 = 6021;
+
 /// WorkBuddy 适配器（无状态单例，见 `adapter::adapter_for`）。
 ///
 /// 唯一的字段是地区：两端协议一致，地区决定端点兜底、客户端身份（UA /
@@ -197,11 +222,67 @@ impl ProviderAdapter for WorkBuddyAdapter {
                 message: format!("上游返回 {status}: {raw}"),
             };
         }
-        if status == 429 || code == Some(QUOTA_LIMIT_CODE) {
-            // 恢复时间只在上游文案里：解析失败给 None，由冷却标记落 10 分钟兜底
-            let reset_at = crate::server::errors::parse_quota_reset_at(raw);
+        // ── 排队准入（429 + 6020，借鉴 wb2api 0f0a708）────────────────
+        // 热门模型对 free 档用户的排队准入：`data.retry_after`（秒）是上游
+        // 明示的「等几秒再试」，与 6004 的按窗限流完全不同。冷却必须按上游
+        // 给的几秒算 —— 落进通用 429 的 10 分钟兜底会把排队放大成账号冷却，
+        // 且换号也排队 ⇒ 全池连环冷却（wb2api 修复前的实证故障）。等待时长
+        // 已由 `read_upstream_error` 从 body 解析进 `retry_after_ms`；缺失时
+        // 给 None（10 分钟兜底）而不是臆造一个秒数。
+        if status == 429 && code == Some(QUEUE_WAITING_CODE) {
+            let reset_at = error_body
+                .get("retry_after_ms")
+                .and_then(Value::as_i64)
+                .filter(|ms| *ms > 0)
+                .map(|ms| crate::server::logging::now_ms() + ms);
             return UpstreamErrorClass::QuotaLimited {
-                reset_at: if reset_at > 0 { Some(reset_at) } else { None },
+                reset_at,
+                message: format!("上游返回 {status}: {raw}（排队准入，稍后自动重试）"),
+                upstream_code: code,
+                status,
+            };
+        }
+        // ── 渠道级容量满载（429 + 6021，借鉴 wb2api ErrUpstreamBusy）──
+        // 上游推理集群排队队列打满，与具体账号无关：换号在任何时刻都会撞
+        // 同一堵墙，正确处置是**不罚号、不轮转**，原样透传给客户端
+        //（Fatal 语义：不冷却、不换账号）。
+        if status == 429 && code == Some(QUEUE_FULL_CODE) {
+            return UpstreamErrorClass::Fatal {
+                status: 503,
+                message: format!("上游返回 {status}: {raw}（上游排队已满，与账号无关，请稍后重试）"),
+                upstream_code: code,
+            };
+        }
+        // ── 账号级限制（11140 + "request illegal" 双条件，借鉴 wb2api
+        // IsAccountRestricted）────────────────────────────────────────
+        // 两条单向都会误伤：只看文案会命中 11-128 通道校验失败（健康账号被
+        // 硬禁用）；只看 code 会把 11140 承载的模型级限流文案也当账号限制。
+        // 双条件命中 → 账号冷却轮换（reset_at None = 10 分钟兜底）。
+        if code == Some(ACCOUNT_RESTRICTED_CODE) && raw.contains(ACCOUNT_RESTRICTED_MSG) {
+            return UpstreamErrorClass::QuotaLimited {
+                reset_at: None,
+                message: format!("上游返回 {status}: {raw}（账号已被上游限制）"),
+                upstream_code: code,
+                status,
+            };
+        }
+        if status == 429 || code == Some(QUOTA_LIMIT_CODE) {
+            // 恢复时间解析链：①文案里的「YYYY-MM-DD HH:MM:SS UTC+8」（6004 形态）
+            // ②body 结构化字段 data.retry_after（秒 → now + 毫秒；wb2api 同款
+            // 优先级 —— 文案墙钟 > body 字段）。都没有给 None，由冷却标记落
+            // 10 分钟兜底。
+            let from_text = crate::server::errors::parse_quota_reset_at(raw);
+            let reset_at = if from_text > 0 {
+                Some(from_text)
+            } else {
+                error_body
+                    .get("retry_after_ms")
+                    .and_then(Value::as_i64)
+                    .filter(|ms| *ms > 0)
+                    .map(|ms| crate::server::logging::now_ms() + ms)
+            };
+            return UpstreamErrorClass::QuotaLimited {
+                reset_at,
                 message: format!("上游返回 {status}: {raw}"),
                 upstream_code: code,
                 status,
@@ -874,5 +955,115 @@ fn value_text(value: &Value) -> String {
         Value::Number(number) => number.to_string(),
         Value::Bool(flag) => flag.to_string(),
         other => other.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod classify_tests {
+    //! 错误分类的四个新增分支（借鉴 wb2api 的实测形态，见各常量说明）。
+    //!
+    //! 单测钉的是**分类结论**而不是文案——文案逐字不变是既有约定，但这里的
+    //! 目的防的是三类真实事故：排队被放大成账号冷却（6020）、健康账号被硬
+    //! 禁用（11140 与 11-128 的文案撞车）、渠道满载被当成账号问题换号空转
+    //! （6021）。
+
+    use super::*;
+    use serde_json::json;
+
+    /// 6020 排队准入：QuotaLimited + reset_at = now + retry_after（秒级短冷却）
+    #[test]
+    fn queue_waiting_uses_body_retry_after() {
+        let body = json!({
+            "code": 6020,
+            "message": "queue.waiting.title",
+            "retry_after_ms": 5000,
+        });
+        let class = WorkBuddyAdapter::new(Region::Cn).classify_error(429, &body);
+        let UpstreamErrorClass::QuotaLimited { reset_at, upstream_code, status, .. } = class else {
+            panic!("6020 应分类为 QuotaLimited，得到 {class:?}");
+        };
+        assert_eq!(upstream_code, Some(6020));
+        assert_eq!(status, 429);
+        let now = crate::server::logging::now_ms();
+        let reset = reset_at.expect("retry_after_ms=5000 应给出绝对恢复时间");
+        // 允许测试执行间隙的少量漂移：reset 应落在 now+4s .. now+6s
+        assert!(
+            reset > now + 4000 && reset < now + 6000,
+            "reset_at 应为 now+5s 量级，得到偏移 {}ms",
+            reset - now
+        );
+    }
+
+    /// 6020 缺 retry_after_ms 时给 None（10 分钟兜底）——不臆造等待时长
+    #[test]
+    fn queue_waiting_without_body_field_falls_back() {
+        let body = json!({"code": 6020, "message": "queue.waiting.title"});
+        let class = WorkBuddyAdapter::new(Region::Cn).classify_error(429, &body);
+        let UpstreamErrorClass::QuotaLimited { reset_at, .. } = class else {
+            panic!("6020 应分类为 QuotaLimited");
+        };
+        assert_eq!(reset_at, None);
+    }
+
+    /// 6021 渠道满载：Fatal（不罚号、不轮转、透传 503）
+    #[test]
+    fn queue_full_is_fatal_without_penalty() {
+        let body = json!({"code": 6021, "message": "queue.full.title"});
+        let class = WorkBuddyAdapter::new(Region::Cn).classify_error(429, &body);
+        match class {
+            UpstreamErrorClass::Fatal { status, upstream_code, .. } => {
+                assert_eq!(status, 503);
+                assert_eq!(upstream_code, Some(6021));
+            }
+            other => panic!("6021 应分类为 Fatal（不罚号），得到 {other:?}"),
+        }
+    }
+
+    /// 11140 账号级限制：code + 文案双条件 → QuotaLimited（冷却轮换）
+    #[test]
+    fn account_restricted_needs_code_and_message() {
+        let body = json!({"code": 11140, "message": "request illegal"});
+        let class = WorkBuddyAdapter::new(Region::Cn).classify_error(429, &body);
+        let UpstreamErrorClass::QuotaLimited { reset_at, upstream_code, .. } = class else {
+            panic!("11140 账号限制应分类为 QuotaLimited，得到 {class:?}");
+        };
+        assert_eq!(upstream_code, Some(11140));
+        assert_eq!(reset_at, None, "账号限制走 10 分钟兜底冷却");
+    }
+
+    /// 11140 承载模型级限流文案时**不是**账号限制 —— 必须落回通用 429
+    /// （QuotaLimited，reset 走文案/兜底），不能被双条件分支误吃
+    #[test]
+    fn account_restricted_code_with_rate_limit_text_stays_quota() {
+        let body = json!({
+            "code": 11140,
+            "message": "The model provider is rate-limiting requests.",
+        });
+        let class = WorkBuddyAdapter::new(Region::Cn).classify_error(429, &body);
+        let UpstreamErrorClass::QuotaLimited { reset_at, .. } = class else {
+            panic!("模型级限流应分类为 QuotaLimited");
+        };
+        assert_eq!(reset_at, None, "无重置文案时回落兜底");
+    }
+
+    /// 11-128 通道校验失败（文案与 11140 相同、code 是字符串）**不得**被
+    /// 11140 双条件分支吃成账号冷却（健康账号保护）。
+    ///
+    /// 钉的现状：字符串 code 经 `as_i64` 得 None，既不进 11140 数字分支、
+    /// 也不进既有 `RATE_LIMIT_CODE` 分支（`code == Some(11-128)` 同样恒 false
+    /// —— 既有形态缺陷，与 wb2api 的 ErrContentBlocked 语义有差异），落 Fatal
+    /// 透传。本测试钉的是「非 QuotaLimited」这条底线：11-128 无论落哪档，
+    /// 都不能把健康账号冷却掉。
+    #[test]
+    fn channel_refused_11_128_not_eaten_by_account_restricted() {
+        let body = json!({
+            "code": "11-128",
+            "message": "request illegal",
+        });
+        let class = WorkBuddyAdapter::new(Region::Cn).classify_error(400, &body);
+        assert!(
+            !matches!(class, UpstreamErrorClass::QuotaLimited { .. }),
+            "11-128 字符串 code 不得进 11140 账号冷却分支，得到 {class:?}"
+        );
     }
 }

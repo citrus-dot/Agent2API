@@ -33,3 +33,5 @@ dist/
 # Docker 部署：密钥与运行数据不入库
 .env
 data/
+.mimosa/
+.DS_Store

@@ -74,24 +74,32 @@ pub struct TransportRequest {
     pub system_proxy_when_unset: bool,
 }
 
-/// 归一化后的上游错误：`{code, message}`
+/// 归一化后的上游错误：`{code, message}`，外加可选的 `retry_after_ms`。
 ///
 /// `message` 的兜底是响应文本的前 500 个字符（Node 的 `text.slice(0, 500)`）。
 /// 适配器的 `classify_error` 收的就是本结构的 JSON 形态（`to_value`）——
 /// 于是「上游错误怎么读」与「这条错误属于哪一档」彻底分开：
 /// 前者是本文件（协议层），后者是适配器（provider 层）。
+///
+/// `retry_after_ms`：上游在 body 结构化字段里明示的等待时长
+/// （`data.retry_after`，秒 → 毫秒；实测形态 6020 queue.waiting）。归一化的
+/// `{code, message}` 装不下它，而排队准入的「等几秒再试」必须如实进入冷却
+/// 决策（借鉴 wb2api 0f0a708）—— 丢了它，通用 429 的 10 分钟兜底会把排队
+/// 放大成账号冷却。解析与合理性上限见 `errors::parse_body_retry_after_seconds`。
 pub struct UpstreamErrorDetail {
     pub code: Option<i64>,
     pub message: String,
+    pub retry_after_ms: Option<i64>,
 }
 
 impl UpstreamErrorDetail {
-    /// 适配器入参形态：`{code, message}`（键名与上游 JSON 一致，
-    /// 于是适配器可以直接用 `error_body.get("code")` 读，不需要中间结构体）
+    /// 适配器入参形态：`{code, message, retry_after_ms}`（键名与上游 JSON 一致
+    /// 或自说明，适配器可以直接用 `error_body.get("code")` 读，不需要中间结构体）
     pub fn to_value(&self) -> Value {
         json!({
             "code": self.code.map(Value::from).unwrap_or(Value::Null),
             "message": self.message,
+            "retry_after_ms": self.retry_after_ms.map(Value::from).unwrap_or(Value::Null),
         })
     }
 }
@@ -114,6 +122,9 @@ pub async fn read_upstream_error(
     }
     let mut code = None;
     let mut message: String = text.chars().take(500).collect();
+    // body 结构化字段里的上游明示等待时长（data.retry_after，秒）：
+    // 解析与合理性上限集中在 errors 侧（宁缺毋滥），这里只调用。
+    let retry_after_ms = crate::server::errors::parse_body_retry_after_seconds(&text);
     if let Ok(payload) = serde_json::from_str::<Value>(&text) {
         code = payload.get("code").and_then(Value::as_i64);
         // Node: `payload?.message || payload?.msg || payload?.error?.message || message`
@@ -138,7 +149,7 @@ pub async fn read_upstream_error(
             message = candidate.to_string();
         }
     }
-    UpstreamErrorDetail { code, message }
+    UpstreamErrorDetail { code, message, retry_after_ms: (retry_after_ms > 0).then_some(retry_after_ms) }
 }
 
 /// 发一次上游请求（不读 body，保留原始响应给流式转发与错误解析）。

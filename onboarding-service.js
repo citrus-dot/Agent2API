@@ -1,3 +1,5 @@
+// ⚠️ 逆向参考样本（NOT RUNTIME CODE）：从 Loomy 客户端安装包提取的材料，
+// 无任何运行路径引用（package.json / Dockerfile / ui / Rust server 均不加载）。
 // 新手任务服务（mock-first 双层）。
 //
 // backend = 'mock'（默认）：读写 userData/onboarding-tasks.json，本地持久化 +

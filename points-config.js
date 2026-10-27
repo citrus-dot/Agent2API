@@ -1,3 +1,8 @@
+// ⚠️ 逆向参考样本（NOT RUNTIME CODE）：从 Loomy 客户端安装包提取的材料，仅供
+// server/src/server/core/providers/loomy/checkin.rs 的协议调查对照。
+// 本仓库不含其依赖（config-path.js / campus-device-id-service.js / utils/*），
+// 无任何运行路径引用（package.json / Dockerfile / ui / Rust server 均不加载）。
+// 文件内的路径解析逻辑（含环境变量指定的任意路径读取）不构成运行面攻击点。
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';

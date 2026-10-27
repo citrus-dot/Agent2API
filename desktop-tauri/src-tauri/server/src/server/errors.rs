@@ -375,9 +375,44 @@ pub fn parse_quota_reset_at(text: &str) -> i64 {
                 }
             }
         }
-        index += 1;
+            index += 1;
     }
     0
+}
+
+/// `data.retry_after` 的合理性上限：2 小时。超过视为解析噪声丢弃
+/// （wb2api 同款口径 —— retryAfterSanity），宁缺毋滥，绝不臆造等待时长。
+const RETRY_AFTER_SANITY_MS: i64 = 2 * 60 * 60 * 1000;
+
+/// 从限流响应 body 的结构化字段解析上游明示的等待时长：`data.retry_after`（秒）。
+///
+/// 实测形态是 6020「queue.waiting.title」（借鉴 wb2api 0f0a708）：热门模型对
+/// free 档用户启用**排队准入** —— `data` 带 `queue_position` / `retry_after` /
+/// `estimated_wait`，语义是「等几秒再试」，与 6004 的按窗限流完全不同。头解析
+/// （Retry-After 头族）不覆盖它：该响应不带这个头，等待时长只在 body 里。
+///
+/// 只认 JSON 信封 `data.retry_after` 数值字段；非法 / 非正 / 超上限丢弃，
+/// 调用方回落本地兜底冷却 —— 绝不臆造。返回毫秒时间戳偏移量（供
+/// `mark_rate_limited` 的 `reset_at` 直接使用），解析不出给 0。
+pub fn parse_body_retry_after_seconds(body: &str) -> i64 {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
+        return 0;
+    };
+    let Some(seconds) = value
+        .get("data")
+        .and_then(|data| data.get("retry_after"))
+        .and_then(serde_json::Value::as_f64)
+    else {
+        return 0;
+    };
+    if !seconds.is_finite() || seconds <= 0.0 {
+        return 0;
+    }
+    let millis = (seconds * 1000.0) as i64;
+    if millis <= 0 || millis > RETRY_AFTER_SANITY_MS {
+        return 0;
+    }
+    millis
 }
 
 /// `YYYY-MM-DD HH:MM:SS`（UTC+8）→ 毫秒时间戳；字段非法时 None。
