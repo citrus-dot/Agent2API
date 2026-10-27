@@ -55,6 +55,11 @@ pub struct BalanceFact {
     /// 最近一次成功查询的余额数字（与余额列同一口径）。`None` = 判不出
     /// （unlimited、无读数、形状不认）—— 跳过判定一律放行。
     pub remaining: Option<f64>,
+    /// 最早未来到期批次（非日包、仍有余额）的时刻（毫秒）。`None` = 无批次
+    /// / 形状不认 —— FEFO 置顶判定跳过该账号。数据源见 `extract_expiring`。
+    pub earliest_expiry: Option<i64>,
+    /// 最早到期批次里的剩余额度（与 `earliest_expiry` 同源同生死）。
+    pub expiring_remaining: Option<f64>,
 }
 
 fn facts_slot() -> &'static Mutex<HashMap<String, BalanceFact>> {
@@ -169,6 +174,61 @@ pub fn balance_facts() -> HashMap<String, BalanceFact> {
         .unwrap_or_default()
 }
 
+/// FEFO 选路用的临期事实快照（借鉴 wb2api `expiringSlotsFor` 的数据侧）：
+/// 只留「最早未来到期批次」有读数的账号 —— `账号 id → (到期时刻, 该批次剩余)`。
+///
+/// 窗口判定（≤7 天）不在这里做：临期与否是选路侧相对 `now` 的判断，这里
+/// 只交事实。日额度包（isDaily）在投影源头就已排除 —— 每日重置不是损失。
+pub fn expiring_facts() -> HashMap<String, (i64, f64)> {
+    facts_slot()
+        .lock()
+        .map(|facts| {
+            facts
+                .iter()
+                .filter_map(|(id, fact)| {
+                    let expiry = fact.earliest_expiry?;
+                    let remaining = fact.expiring_remaining?;
+                    Some((id.clone(), (expiry, remaining)))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// 从归一化余额 JSON 投影「未来到期批次中最早的一批」（FEFO 数据侧）。
+///
+/// 判据（对齐 wb2api `creditsEarliestExpiry` 的口径）：
+///   - 只看**非日额度包**（`isDaily` 的每日重置不是损失，真实损失来自
+///     Bonus Pack 这类有抵扣截止的包）；
+///   - 批次须仍有余额（`left > 0`）且未过期（`expireAt > now`）；
+///   - 取 `expireAt` 最早的一条。全无命中给 `None`。
+///
+/// `resources` 的键形状来自 `billing::usage::credit_packs_from`
+/// （`isDaily` / `left` / `expireAt`），键缺失 / 类型不对都按「没有这批」跳过。
+fn extract_expiring(usage: &Value, now: i64) -> Option<(i64, f64)> {
+    let resources = usage.get("resources")?.as_array()?;
+    let mut best: Option<(i64, f64)> = None;
+    for item in resources {
+        if item.get("isDaily").and_then(Value::as_bool).unwrap_or(false) {
+            continue;
+        }
+        let left = item.get("left").and_then(Value::as_f64).unwrap_or(0.0);
+        if left <= 0.0 {
+            continue;
+        }
+        let Some(expire_at) = item.get("expireAt").and_then(Value::as_i64) else {
+            continue;
+        };
+        if expire_at <= now {
+            continue;
+        }
+        if best.is_none_or(|(current, _)| expire_at < current) {
+            best = Some((expire_at, left));
+        }
+    }
+    best
+}
+
 // ─── 写 ──────────────────────────────────────────────────────
 
 /// 记一笔「尝试开始」（心跳路径在**发请求之前**调用，见模块头）。
@@ -245,10 +305,22 @@ pub fn write_result(account_id: &str, outcome: &UsageOutcome) {
     })
     .flatten();
     match written {
-        // 成功且判出了数字 → 刷新事实
+        // 成功且判出了数字 → 刷新事实（FEFO 投影一起算：一次遍历两份产出）
         Some((true, Some(remaining))) => {
+            let (earliest_expiry, expiring_remaining) = match outcome.usage.as_ref() {
+                Some(usage) => extract_expiring(usage, now).map(|(expiry, left)| (Some(expiry), Some(left)))
+                    .unwrap_or((None, None)),
+                None => (None, None),
+            };
             if let Ok(mut facts) = facts_slot().lock() {
-                facts.insert(account_id.to_string(), BalanceFact { remaining: Some(remaining) });
+                facts.insert(
+                    account_id.to_string(),
+                    BalanceFact {
+                        remaining: Some(remaining),
+                        earliest_expiry,
+                        expiring_remaining,
+                    },
+                );
             }
         }
         // 成功但判不出 → 摘除旧事实（unlimited / 形状变化后不再被旧数字挡路）
@@ -517,9 +589,22 @@ fn reload_facts() {
         .into_iter()
         .filter(|(_, record)| record.usage.is_some())
         .filter_map(|(id, record)| {
-            record
-                .remaining
-                .map(|remaining| (id, BalanceFact { remaining: Some(remaining) }))
+            // FEFO 投影与数值同源：从库存的 usage JSON 重建最早到期批次
+            //（重启后选路的初始视野与运行中一致，不丢临期状态）
+            let expiring = record
+                .usage
+                .as_ref()
+                .and_then(|usage| extract_expiring(usage, logging::now_ms()));
+            record.remaining.map(|remaining| {
+                (
+                    id,
+                    BalanceFact {
+                        remaining: Some(remaining),
+                        earliest_expiry: expiring.map(|(expiry, _)| expiry),
+                        expiring_remaining: expiring.map(|(_, left)| left),
+                    },
+                )
+            })
         })
         .collect();
     if let Ok(mut slot) = facts_slot().lock() {

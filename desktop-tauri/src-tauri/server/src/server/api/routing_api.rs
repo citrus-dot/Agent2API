@@ -213,6 +213,13 @@ pub async fn get_routing_queue(
     // 任何会话的计时，也不该消耗下一次轮转。家内轮询的各家游标同理，所以
     // 两种轮转策略都传 `None`：面板看到的是「各家都从第 0 位起」的静态序。
     let (sunk, resting, open) = state.upstream().route_queue_facts(now);
+    // 预演同样反映 FEFO：开关开着时置顶效果要如实出现在回放里（预演不刷新
+    // 计时 / 不消耗游标 —— 取快照是纯读，与那两条约定不冲突）
+    let expiring_facts = if settings.prefer_expiring {
+        Some(crate::server::core::usage_records::expiring_facts())
+    } else {
+        None
+    };
     let meta = routing::PlanMeta {
         strategy: settings.strategy,
         sunk: &sunk,
@@ -222,6 +229,7 @@ pub async fn get_routing_queue(
         cursor: None,
         provider_cursors: None,
         sticky_account: None,
+        expiring: expiring_facts.as_ref(),
     };
     let plan = routing::plan_route(&scoped, &keys, &counts, &[], now, &meta);
     let entry_json = |entry: &routing::PlanEntry| {

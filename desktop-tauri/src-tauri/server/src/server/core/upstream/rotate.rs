@@ -181,6 +181,13 @@ pub(super) async fn select_target_account(
     } else {
         None
     };
+    // FEFO 事实快照（借鉴 wb2api expiringSlotsFor）：开关开才取，其余账号
+    // 不参与置顶判定。取一次内存快照（不落盘、不发上游请求）。
+    let expiring_facts = if settings.prefer_expiring {
+        Some(crate::server::core::usage_records::expiring_facts())
+    } else {
+        None
+    };
     let meta = routing::PlanMeta {
         strategy: settings.strategy,
         sunk: &snap.sunk,
@@ -190,6 +197,7 @@ pub(super) async fn select_target_account(
         cursor,
         provider_cursors: provider_cursors.as_ref(),
         sticky_account: snap.sticky_hit.as_deref(),
+        expiring: expiring_facts.as_ref(),
     };
     let plan = routing::plan_route(&candidates, keys, &counts, tried_ids, now, &meta);
     let decision = decision_json(&plan, &settings, now);
@@ -571,6 +579,12 @@ pub(super) fn pick_next_account(
     // 空会话键使 sticky_lookup 直接返回 None，其余快照（垫底 / 休息 / 熔断）
     // 照常参与排序
     let snap = service.route.snapshot("", now, 0);
+    // 顺延路径同样参与 FEFO：失败换号时临期账号仍优先（开关关 / 无读数给 None）
+    let expiring_facts = if settings.prefer_expiring {
+        Some(crate::server::core::usage_records::expiring_facts())
+    } else {
+        None
+    };
     let meta = routing::PlanMeta {
         strategy: settings.strategy,
         sunk: &snap.sunk,
@@ -580,6 +594,7 @@ pub(super) fn pick_next_account(
         cursor: None,
         provider_cursors: None,
         sticky_account: None,
+        expiring: expiring_facts.as_ref(),
     };
     let plan = routing::plan_route(&candidates, keys, &counts, tried_ids, now, &meta);
     plan.ordered.into_iter().next().map(|entry| entry.account)

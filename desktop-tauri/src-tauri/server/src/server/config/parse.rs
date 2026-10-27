@@ -509,6 +509,7 @@ pub(super) fn routing_from(map: &Map<String, Value>) -> RoutingSettings {
             ROUTING_BREAKER_MIN_SUCCESS,
             ROUTING_BREAKER_MAX_SUCCESS,
         ),
+        prefer_expiring: bool_field(KEY_ROUTING_PREFER_EXPIRING, defaults.prefer_expiring),
     }
 }
 

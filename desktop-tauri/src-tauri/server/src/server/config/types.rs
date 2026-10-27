@@ -1005,6 +1005,9 @@ pub const KEY_ROUTING_BREAKER_THRESHOLD: &str = "routingBreakerThreshold";
 pub const KEY_ROUTING_BREAKER_TIMEOUT: &str = "routingBreakerTimeoutSeconds";
 /// 恢复阈值：熔断放行后要连续成功几次才算恢复（`routingBreakerSuccessThreshold`）
 pub const KEY_ROUTING_BREAKER_SUCCESS: &str = "routingBreakerSuccessThreshold";
+/// FEFO 到期优先选号开关（`routingPreferExpiring`，默认开）：见
+/// `RoutingSettings.prefer_expiring` 的说明
+pub const KEY_ROUTING_PREFER_EXPIRING: &str = "routingPreferExpiring";
 
 pub const ROUTING_STRATEGY_ORDER: &str = "order";
 pub const ROUTING_STRATEGY_ROTATE: &str = "rotate";
@@ -1115,6 +1118,12 @@ pub struct RoutingSettings {
     pub breaker_threshold: i64,
     pub breaker_timeout_seconds: i64,
     pub breaker_success_threshold: i64,
+    /// FEFO 到期优先选号（借鉴 wb2api expiringSlotsFor）：有「7 天内到期且
+    /// 仍有余额」积分包的账号在候选队列里置顶（会话粘性命中仍最优先）。
+    /// **默认开** —— 这是自建 fork 的动机之一（过期 = 积分永久损失，比手排
+    /// 优先级更不该等），关掉即可回到纯主备序。生效前提：账号开了自动余额
+    /// 查询（数据源是余额记录，读数缺失 / 太旧都不参与置顶）。
+    pub prefer_expiring: bool,
 }
 
 impl Default for RoutingSettings {
@@ -1128,6 +1137,7 @@ impl Default for RoutingSettings {
             breaker_threshold: 5,
             breaker_timeout_seconds: 60,
             breaker_success_threshold: 2,
+            prefer_expiring: true,
         }
     }
 }
@@ -1143,6 +1153,7 @@ pub struct RoutingPatch {
     pub breaker_threshold: Option<i64>,
     pub breaker_timeout_seconds: Option<i64>,
     pub breaker_success_threshold: Option<i64>,
+    pub prefer_expiring: Option<bool>,
 }
 
 // ─── 长度截断的自动续写（autoContinue / autoContinueMaxRounds）─────────

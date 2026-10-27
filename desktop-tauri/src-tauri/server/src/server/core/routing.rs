@@ -517,6 +517,10 @@ pub struct PlanMeta<'a> {
     pub provider_cursors: Option<&'a HashMap<String, usize>>,
     /// 粘性命中的账号 id（`None` = 无命中）
     pub sticky_account: Option<&'a str>,
+    /// FEFO 到期优先（借鉴 wb2api expiringSlotsFor，自建 fork 新增）：
+    /// `账号 id → (最早到期时刻, 该批次剩余)`。`None` = 开关关 / 无余额读数，
+    /// 修饰层整体跳过。窗口判定（≤7 天）在修饰层内做，这里只交事实。
+    pub expiring: Option<&'a HashMap<String, (i64, f64)>>,
 }
 
 /// 时间戳 → 「HH:MM」短文案（原因句里用，按**操作者本机时区** —— 与请求
@@ -732,6 +736,35 @@ pub fn plan_route(
         }
     }
 
+    // ── FEFO：临期账号在非粘性部分置顶（借鉴 wb2api expiringSlotsFor，自建新增）
+    //
+    // 语义：有「7 天内到期且仍有余额」积分包（非日包，日包每日重置不算损失）
+    // 的账号，排到其余候选之前 —— 过期 = 积分永久损失，优先级高于手排主备序。
+    // 稳定排序：临期组内保持原策略序，且**按到期时刻升序**（越快到期越先）。
+    //
+    // 两个刻意的不处理：
+    //   - 不覆盖粘性命中（`rest_start` 起排）—— 会话亲和是更靠近用户体验的
+    //     承诺，临期账号下一轮（粘性过期后）自然回到队首；
+    //   - 只在 `order` 策略下有意义（`rotate` 的轮换起点概念里没有「置顶」），
+    //     但修饰本身对两种策略都无害 —— rotate 下临期账号仍会进环位，
+    //     只是排列被提前，行为可预期。
+    if let Some(expiring) = meta.expiring {
+        let rest_start = usize::from(sticky_hit);
+        let window_end = now + 7 * 24 * 3600 * 1000;
+        let is_expiring = |account: &Value| -> Option<i64> {
+            let id = account_id(account)?;
+            let (expiry, remaining) = expiring.get(id)?;
+            (*remaining > 0.0 && *expiry > now && *expiry <= window_end).then_some(*expiry)
+        };
+        let tail = &mut arranged[rest_start..];
+        // 键：非临期 = (true, 0) 排后；临期 = (false, 到期毫秒) 升序 ——
+        // 到期越早键越小，排越前（越快到期越先消耗）
+        tail.sort_by_key(|account| match is_expiring(account) {
+            Some(expiry) => (false, expiry),
+            None => (true, 0),
+        });
+    }
+
     let rank_of = |account: &Value, table: &HashMap<String, i64>| -> bool {
         account_id(account)
             .and_then(|id| table.get(id))
@@ -864,6 +897,7 @@ mod tests {
             cursor: None,
             provider_cursors: Some(cursors),
             sticky_account: None,
+            expiring: None,
         }
     }
 
@@ -978,6 +1012,50 @@ mod tests {
         assert!(plan.ordered[2].reason.contains("优先级更高的家"), "{}", plan.ordered[2].reason);
     }
 
+    /// FEFO：临期账号（≤7 天到期且有余额）在非粘性部分置顶，且临期组内按
+    /// 到期升序（越快到期越先）—— 过期 = 永久损失，优先级高于手排主备序。
+    /// 同时钉两条边界：粘性命中仍在 FEFO 之前（会话亲和优先），窗口外
+    /// （>7 天）的批次不参与置顶（wb2api：远期批次只是「提示存在」）。
+    #[test]
+    fn expiring_accounts_pin_before_others_but_after_sticky() {
+        let empty_numbers: HashMap<String, i64> = HashMap::new();
+        let empty_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let counts: HashMap<String, usize> = HashMap::new();
+        let keys = CooldownKeys::new("test-model");
+        let accounts = vec![
+            account("a1", "A", 100),
+            account("a2", "A", 110),
+            account("a3", "A", 120),
+            account("a4", "A", 130),
+        ];
+        // a1：3 天后到期（第一档）；a2：5 天后到期（第二档）；a4：20 天后到期（窗口外）
+        let now = 1_700_000_000_000_i64;
+        let day: i64 = 24 * 3600 * 1000;
+        let mut expiring: HashMap<String, (i64, f64)> = HashMap::new();
+        expiring.insert("a1".to_string(), (now + 3 * day, 500.0));
+        expiring.insert("a2".to_string(), (now + 5 * day, 300.0));
+        expiring.insert("a4".to_string(), (now + 20 * day, 800.0));
+        // 粘性命中 a4（窗口外账号）—— 它必须仍在 FEFO 置顶之前
+        let meta = PlanMeta {
+            strategy: RouteStrategy::Order,
+            sunk: &empty_numbers,
+            resting: &empty_numbers,
+            open: &empty_ids,
+            limiter_blocked: &empty_ids,
+            cursor: None,
+            provider_cursors: None,
+            sticky_account: Some("a4"),
+            expiring: Some(&expiring),
+        };
+        let plan = plan_route(&accounts, &keys, &counts, &[], now, &meta);
+        let order: Vec<&str> = plan.ordered.iter().map(|entry| entry.id.as_str()).collect();
+        assert_eq!(
+            order,
+            vec!["a4", "a1", "a2", "a3"],
+            "粘性 a4 最先；临期组按到期升序 a1(3天) → a2(5天)；窗口外 a4 之外的部分垫底"
+        );
+    }
+
     /// 粘性命中的账号必须真的排到第 1 位 —— 即使它的优先级最低。
     ///
     /// 这条钉的是 2026-10-13 修掉的一处**上游既有缺陷**：置顶那一步原先在
@@ -1008,6 +1086,7 @@ mod tests {
             cursor: None,
             provider_cursors: None,
             sticky_account: Some("a3"),
+            expiring: None,
         };
         let plan = plan_route(&accounts, &keys, &counts, &[], 1_700_000_000_000, &meta);
         let order: Vec<&str> = plan.ordered.iter().map(|entry| entry.id.as_str()).collect();
@@ -1044,6 +1123,7 @@ mod tests {
             cursor: None,
             provider_cursors: Some(&cursors),
             sticky_account: Some("b1"),
+            expiring: None,
         };
         let plan = plan_route(&accounts, &keys, &counts, &[], 1_700_000_000_000, &meta);
         let order: Vec<&str> = plan.ordered.iter().map(|entry| entry.id.as_str()).collect();
@@ -1072,6 +1152,7 @@ mod tests {
             cursor: None,
             provider_cursors: None,
             sticky_account: Some("a2"),
+            expiring: None,
         };
         let plan = plan_route(&accounts, &keys, &counts, &[], 1_700_000_000_000, &meta);
         let order: Vec<&str> = plan.ordered.iter().map(|entry| entry.id.as_str()).collect();
@@ -1120,6 +1201,7 @@ mod tests {
             cursor: None,
             provider_cursors: Some(&cursors),
             sticky_account: None,
+            expiring: None,
         };
         let plan = plan_route(&accounts, &keys, &counts, &[], 1_700_000_000_000, &meta);
         let order: Vec<&str> = plan.ordered.iter().map(|entry| entry.id.as_str()).collect();
@@ -1155,6 +1237,7 @@ mod tests {
             cursor: None,
             provider_cursors: None,
             sticky_account: None,
+            expiring: None,
         };
         let plan = plan_route(&accounts, &keys, &counts, &[], 1_700_000_000_000, &meta);
         let order: Vec<&str> = plan.ordered.iter().map(|entry| entry.id.as_str()).collect();
