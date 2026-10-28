@@ -67,8 +67,11 @@ struct Alert {
     message: String,
 }
 
-/// 迟滞 + 静默的进程内状态：`(rule, scope) → (连续命中轮数, 上次推送时刻, 已在告警中)`
-static STATES: Mutex<Option<HashMap<(String, String), (u32, i64, bool)>>> = Mutex::new(None);
+/// 单条告警的迟滞状态：连续命中轮数（告警前）/ 未命中轮数（告警中）、
+/// 上次推送时刻、是否已在告警中。
+type GateState = (u32, i64, bool);
+/// 迟滞 + 静默的进程内状态：`(rule, scope) → GateState`
+static STATES: Mutex<Option<HashMap<(String, String), GateState>>> = Mutex::new(None);
 
 /// webhook 地址表（kv `alertWebhookUrls`，逗号分隔；空 = 只日志不外推）
 fn webhook_urls() -> Vec<String> {
