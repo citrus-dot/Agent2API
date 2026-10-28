@@ -780,6 +780,10 @@ impl ServerState {
         // 不再是全局任务（见 `core::usage_query` 的模块头）。
         core::usage_query::spawn_sweeper(state.store.clone());
 
+        // 运维告警循环（自建 fork 新增）：四规则每 5 分钟评估一轮，命中走
+        // webhook（kv `alertWebhookUrls`）+ 日志；机制层见 `core::alerting` 模块头。
+        core::alerting::spawn(state.store.clone(), state.request_stats());
+
         Ok(state)
     }
 

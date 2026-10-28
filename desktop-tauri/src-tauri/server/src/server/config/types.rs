@@ -83,6 +83,11 @@ pub const KEY_UPDATE_PROXY: &str = "updateProxy";
 /// `core::update::version` 的预发布段处理。
 pub const KEY_UPDATE_BETA: &str = "updateBeta";
 
+/// 运维告警的 webhook 地址表（`alertWebhookUrls`，逗号分隔；借鉴 Coding2API
+/// `ALERT_WEBHOOK_URL`，自建 fork 新增）。空 = 告警只走日志不外推。
+/// 多个地址全部尝试；单地址失败不影响其它地址与告警循环。
+pub const KEY_ALERT_WEBHOOK_URLS: &str = "alertWebhookUrls";
+
 /// 代理内核（mihomo）的**存放目录**（config.json 键）。
 ///
 /// 值是**绝对路径**；缺省 / 空串 / 相对路径（读侧视为写坏）都回落

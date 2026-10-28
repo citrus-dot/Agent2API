@@ -672,6 +672,22 @@ impl RequestStats {
     /// 不会崩也不会误报有内容。**注意它不会把读数清成 0 而不作声**：
     /// 读取**失败**（HTTP 错误）走的是另一条路（`render('读取请求日志失败…')`
     /// 与徽标退成「—」），而这里返回的是「成功但为空」——两者的区别在前端是有意的。
+    /// 窗口错误率（告警规则 4 的数据源）：`(总数, 失败数)`；库不可用给 `None`。
+    ///
+    /// 失败判据用 HTTP 语义（`status >= 400`）—— `status` 列存的就是最终
+    /// 响应状态码，429/5xx/上游透传错误全都在这一列里。
+    pub fn error_rate_window(&self, since_ms: i64) -> Option<(i64, i64)> {
+        let guard = self.guard();
+        self.with_conn(&guard, |conn| {
+            conn.query_row(
+                "SELECT COUNT(*), COALESCE(SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END), 0)
+                 FROM requests WHERE ts >= ?1",
+                [since_ms],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+        })
+    }
+
     pub fn query_requests(&self, filter: &RequestQuery) -> Value {
         // limit 夹在 [1, MAX_LIMIT]：前端传 0 或十万都不该让接口躺平
         let limit = filter.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);

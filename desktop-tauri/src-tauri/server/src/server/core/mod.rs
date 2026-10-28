@@ -61,6 +61,7 @@
 
 pub mod account_store;
 pub mod account_transfer;
+pub mod alerting;
 pub mod api_keys;
 pub mod auth;
 pub mod auth_http;
