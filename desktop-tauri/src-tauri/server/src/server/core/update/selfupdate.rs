@@ -14,9 +14,9 @@
 //! 面板上更新完成后也会提示。
 //!
 //! ── 开关：只认环境变量 ────────────────────────────────────────
-//! `AGENT2API_SELF_UPDATE=1`（Dockerfile 里默认设好）。裸机/桌面形态没有
-//! 重启监管（systemd 单元、容器 restart 策略都没有），退出进程等于把服务
-//! 停掉 —— 那两种形态不能走这条路，因此不设变量就不提供入口。
+//! `AGENT2API_SELF_UPDATE=1`（Dockerfile 里默认设好），仅容器启用直接替换。
+//! systemd 走独立受限升级程序（systemd 模块），桌面端走平台安装器。
+//! 未受监管的前台进程不提供“退出即重启”，避免退出后服务无人拉起。
 //!
 //! ── 安全边界 ──────────────────────────────────────────────────
 //! 三步都不能省：① 下载地址过 `assert_downloadable` 的域名白名单（在下载
@@ -65,7 +65,8 @@ pub fn enabled() -> bool {
 
 /// 本部署是否可用容器内更新：Linux + 开关打开 + 架构有对应的包名。
 pub fn supported() -> bool {
-    cfg!(target_os = "linux") && enabled() && bundle_name().is_some()
+    cfg!(target_os = "linux") && !super::desktop_shell() && enabled() && bundle_name().is_some()
+        && crate::server::core::system_info::in_container()
 }
 
 /// 本机架构对应的更新包名（非 Linux / 未知架构为 None）。
@@ -80,23 +81,13 @@ pub fn current_exe_path() -> Result<PathBuf, UpdateError> {
     Ok(std::fs::canonicalize(&exe).unwrap_or(exe))
 }
 
-/// 上一版本的备份路径：与目标同目录、加 `.backup` 后缀（只保留一代）。
+/// 安装失败恢复用的临时备份路径：同目录、加 `.backup` 后缀，安装成功即清理。
 fn backup_path(target: &Path) -> PathBuf {
     let name = target
         .file_name()
         .map(|value| value.to_string_lossy().to_string())
         .unwrap_or_else(|| "agent2api".to_string());
     target.with_file_name(format!("{name}.backup"))
-}
-
-/// 是否存在可回滚的上一版本（面板据此决定要不要显示回滚入口）。
-pub fn backup_available() -> bool {
-    if !cfg!(target_os = "linux") {
-        return false;
-    }
-    current_exe_path()
-        .map(|exe| backup_path(&exe).is_file())
-        .unwrap_or(false)
 }
 
 // ─── 校验和 ─────────────────────────────────────────────────
@@ -111,7 +102,8 @@ pub async fn fetch_checksum(url: &str) -> Result<String, UpdateError> {
         ("User-Agent".to_string(), USER_AGENT.to_string()),
         ("Accept".to_string(), "text/plain".to_string()),
     ];
-    let response = client::fetch_with_egress(url, &headers, Some(CHECKSUM_TIMEOUT_MS)).await?;
+    super::assert_downloadable(url)?;
+    let response = client::fetch_official(url, &headers, Some(CHECKSUM_TIMEOUT_MS)).await?;
     if !response.status().is_success() {
         return Err(UpdateError::new(format!(
             "下载校验文件失败：GitHub 返回 HTTP {}",
@@ -182,6 +174,8 @@ pub fn extract_bundle(
     let mut header = [0u8; 512];
     let mut long_name: Option<String> = None;
     let mut total: u64 = 0;
+    let mut seen = std::collections::HashSet::new();
+    let mut entries = 0usize;
     let mut out = Extracted { binary: false, ui_files: 0 };
 
     loop {
@@ -191,7 +185,21 @@ pub fn extract_bundle(
         if header.iter().all(|byte| *byte == 0) {
             break; // 结束块
         }
+        entries += 1;
+        if entries > 100_000 {
+            return Err(UpdateError::new("更新包条目过多，已中止"));
+        }
+        let recorded = octal(&header[148..156]);
+        let calculated: u64 = header.iter().enumerate()
+            .map(|(index, byte)| if (148..156).contains(&index) { 32 } else { u64::from(*byte) }).sum();
+        if recorded != calculated {
+            return Err(UpdateError::new("更新包已损坏（tar 头校验失败）"));
+        }
         let size = octal(&header[124..136]);
+        total = total.saturating_add(size);
+        if total > MAX_EXTRACTED_BYTES {
+            return Err(UpdateError::new("更新包解压后体积异常，已中止"));
+        }
         let entry_type = header[156] as char;
         let prefix = cstr(&header[345..500]);
         let mut name = long_name.take().unwrap_or_else(|| {
@@ -214,11 +222,10 @@ pub fn extract_bundle(
             'x' => {
                 let body = read_meta(&mut tar, size)?;
                 let text = String::from_utf8_lossy(&body).to_string();
-                if let Some(value) = text
-                    .lines()
-                    .find_map(|line| line.strip_prefix("path=").map(|value| value.trim().to_string()))
+                if let Some(value) = text.lines().filter_map(|line| line.split_once(' '))
+                    .find_map(|(_, record)| record.strip_prefix("path="))
                 {
-                    long_name = Some(value);
+                    long_name = Some(value.to_string());
                 }
                 read_padding(&mut tar, size)?;
                 continue;
@@ -226,8 +233,15 @@ pub fn extract_bundle(
             _ => {}
         }
 
-        let relative = safe_relative(&name);
-        let target: Option<PathBuf> = match (relative, entry_type) {
+        let relative = safe_relative(&name)
+            .ok_or_else(|| UpdateError::new("更新包包含不安全的路径"))?;
+        if !seen.insert(relative.clone()) {
+            return Err(UpdateError::new("更新包包含重复条目"));
+        }
+        if !matches!(entry_type, '0' | '\0' | '5') {
+            return Err(UpdateError::new("更新包包含不支持的链接或特殊文件"));
+        }
+        let target: Option<PathBuf> = match (Some(relative), entry_type) {
             (Some(relative), _) if relative == Path::new(BINARY_ENTRY) => {
                 Some(bin_stage.join(BINARY_ENTRY))
             }
@@ -248,10 +262,6 @@ pub fn extract_bundle(
             }
             // 普通文件：落盘；不在白名单里的照样跳过内容（tar 是流式的）
             (target, '0' | '\0') => {
-                total = total.saturating_add(size);
-                if total > MAX_EXTRACTED_BYTES {
-                    return Err(UpdateError::new("更新包解压后体积异常，已中止"));
-                }
                 match target {
                     Some(target) => {
                         write_entry(&mut tar, &target, size)?;
@@ -280,8 +290,9 @@ pub fn extract_bundle(
 /// 条目名的安全归一：去掉 `./` 前缀，拒绝绝对路径 / `..` / 反斜杠 / 空段。
 /// 返回可安全 `join` 到暂存目录的相对路径。
 fn safe_relative(name: &str) -> Option<PathBuf> {
-    let trimmed = name.trim_start_matches("./").trim();
-    if trimmed.is_empty() || trimmed.starts_with('/') || trimmed.contains('\\') {
+    let mut trimmed = name;
+    while let Some(rest) = trimmed.strip_prefix("./") { trimmed = rest; }
+    if trimmed.is_empty() || trimmed.starts_with('/') || trimmed.contains(['\\', '\0']) {
         return None;
     }
     let mut out = PathBuf::new();
@@ -407,7 +418,7 @@ fn set_mode(path: &Path, mode: u32) {
     }
 }
 
-// ─── 替换与回滚 ─────────────────────────────────────────────
+// ─── 文件替换 ───────────────────────────────────────────────
 
 /// 删除文件或目录（不存在、失败都不报错 —— 调用点都是「尽力清掉」）。
 fn remove_path(path: &Path) {
@@ -427,7 +438,7 @@ fn remove_path(path: &Path) {
 /// 实测（`/usr/local/bin/agent2api-server`）可行。**目录不能这么干** —— 见
 /// [`replace_dir`]。
 fn replace_file(target: &Path, staged: &Path, backup: &Path) -> Result<(), UpdateError> {
-    remove_path(backup); // 只保留一代备份
+    remove_path(backup);
     std::fs::rename(target, backup).map_err(|error| {
         UpdateError::new(format!("备份现行文件失败（{}）：{error}", target.display()))
     })?;
@@ -475,35 +486,6 @@ fn copy_dir_all(from: &Path, to: &Path) -> std::io::Result<()> {
             std::fs::copy(entry.path(), &destination)?;
         }
     }
-    Ok(())
-}
-
-/// 从备份还原：现行版本先挪到临时名，备份落位后再删临时名。
-///
-/// 为什么不直接 `rename(backup, target)`：目录的 rename 要求目标为空或不存在
-/// （`ENOTEMPTY`），而这里是「用一个已有目录换掉另一个已有目录」。
-///
-/// 回滚这条路可以放心用 rename：走到这里时 target 与 backup **都在可写层**
-/// （现行版本是 [`replace_dir`] 改名进来的，备份是它复制出来的），不存在
-/// overlayfs 上层/下层跨层改名的问题（[`replace_dir`] 的 `EXDEV` 只出现在
-/// 改**镜像层**里的目录时）。
-fn restore(target: &Path, backup: &Path) -> Result<(), UpdateError> {
-    if !backup.exists() {
-        return Err(UpdateError::with_status(400, "没有可回滚的上一版本（备份不存在）"));
-    }
-    let name = target
-        .file_name()
-        .map(|value| value.to_string_lossy().to_string())
-        .unwrap_or_else(|| "agent2api".to_string());
-    let stale = target.with_file_name(format!("{name}.rollback-tmp"));
-    remove_path(&stale);
-    std::fs::rename(target, &stale)
-        .map_err(|error| UpdateError::new(format!("回滚失败（无法移开现行版本）：{error}")))?;
-    if let Err(error) = std::fs::rename(backup, target) {
-        let _ = std::fs::rename(&stale, target);
-        return Err(UpdateError::new(format!("回滚失败（已还原）：{error}")));
-    }
-    remove_path(&stale);
     Ok(())
 }
 
@@ -566,10 +548,20 @@ pub fn apply(
             if dir.is_dir() {
                 if let Err(error) = replace_dir(dir, stage, &backup_path(dir)) {
                     // 整单失败：二进制也还原，不留「新版程序 + 旧版界面」的半套
-                    let _ = restore(exe, &backup_path(exe));
+                    if let Err(restore_error) = std::fs::rename(backup_path(exe), exe) {
+                        return Err(UpdateError::new(format!(
+                            "{}；恢复现行程序失败：{restore_error}", error.message
+                        )));
+                    }
                     return Err(error);
                 }
                 ui_updated = true;
+            }
+        }
+        remove_path(&backup_path(exe));
+        if ui_updated {
+            if let Some(dir) = ui_dir {
+                remove_path(&backup_path(dir));
             }
         }
         Ok(ApplyOutcome { ui_updated })
@@ -580,22 +572,6 @@ pub fn apply(
         let _ = std::fs::remove_dir_all(stage);
     }
     outcome
-}
-
-/// 回滚到上一版本（二进制与界面一起）。
-pub fn rollback(exe: &Path, ui_dir: Option<&Path>) -> Result<ApplyOutcome, UpdateError> {
-    if !backup_path(exe).is_file() {
-        return Err(UpdateError::with_status(400, "没有可回滚的上一版本（备份不存在）"));
-    }
-    restore(exe, &backup_path(exe))?;
-    let mut ui_updated = false;
-    if let Some(dir) = ui_dir {
-        if backup_path(dir).is_dir() {
-            restore(dir, &backup_path(dir))?;
-            ui_updated = true;
-        }
-    }
-    Ok(ApplyOutcome { ui_updated })
 }
 
 // ─── 重启 ───────────────────────────────────────────────────

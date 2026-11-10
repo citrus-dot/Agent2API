@@ -1,0 +1,263 @@
+.routing-config-view { display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; container: routing / inline-size; }
+.routing-config-loading { display: flex; flex: 1; min-height: 180px; align-items: center; justify-content: center; }
+.routing-config-shell { display: grid; grid-template-columns: 205px minmax(0, 1fr); gap: 22px; flex: 1; min-width: 0; min-height: 0; padding: 10px;
+  overflow: hidden; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface-2);
+  background-image: radial-gradient(var(--hairline) .8px, transparent .8px); background-size: 20px 20px; }
+.routing-config-rail { position: relative; z-index: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; gap: 0; padding: 0;
+  border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface); overflow: hidden; }
+.routing-config-rail-head { display: flex; align-items: center; gap: 8px; padding: 12px; }
+.routing-config-rail-head b { font-size: 13px; font-weight: 600; }
+.routing-config-rail-head > span { color: var(--text-3); font-size: 12px; }
+.routing-config-rail-head > button { margin-left: auto; }
+.routing-rail-search { padding: 0 10px 8px; }
+.routing-rail-search input { font-size: 12px; }
+.routing-config-rail-list { flex: 1; min-height: 0; padding: 0 7px 10px; overflow: auto;
+  --ui-selection-bg: var(--primary-soft); --ui-selection-border: transparent; }
+.routing-config-rail-list > * { flex: none; }
+.routing-config-rail-list [data-slot='sidebar-group-label'] { padding: 12px 8px 4px; font-size: 11px; }
+.routing-config-rail-list .routing-config-scope-item { padding: 9px 8px; }
+.routing-config-rail-list .routing-config-scope-item[data-active] { color: var(--primary-fg); }
+.routing-config-scope-item b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; font-weight: 550; }
+.routing-config-scope-item small { display: block; margin-top: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); font-size: 11px; font-weight: 400; }
+.routing-config-scope-item[data-active] small { color: var(--primary-fg); }
+.routing-rail-dirty { display: inline-flex; flex: none; align-items: center; }
+.routing-config-rail-foot { padding: 10px; gap: 0; border-top: 1px solid var(--hairline); }
+.routing-config-rail-foot button { width: 100%; }
+
+.routing-canvas { position: relative; display: grid; grid-template-columns: minmax(270px, 314px) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto;
+  column-gap: 52px; row-gap: 12px; min-width: 0; min-height: 0; }
+.routing-canvas-edges { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
+.routing-canvas-edges path { fill: none; stroke: var(--primary-bd); stroke-width: 1.5; }
+.routing-canvas-edges circle { fill: var(--surface); stroke: var(--primary-bd); stroke-width: 1.5; }
+.routing-canvas-edges .routing-canvas-origin { fill: var(--primary); stroke: var(--primary); }
+.routing-config-column, .routing-groups-column { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 10px; min-width: 0; min-height: 0; }
+.routing-config-column { justify-content: safe center; }
+.routing-column-head { display: flex; align-items: center; flex: none; flex-wrap: wrap; gap: 6px; min-height: 28px; color: var(--text-3); font-size: 11.5px; }
+.routing-column-head > b { color: var(--text); font-size: 13px; font-weight: 600; }
+.routing-column-head > .right { margin-left: auto; display: flex; align-items: center; gap: 3px; }
+.routing-canvas-note { display: flex; align-items: flex-start; flex: none; gap: 6px; margin: 0; color: var(--text-3); font-size: 11px; line-height: 1.6; }
+.routing-canvas-note > .ico { margin-top: 2px; }
+.routing-canvas-legend { grid-column: 1 / -1; display: flex; align-items: center; flex-wrap: wrap; gap: 14px; color: var(--text-3); font-size: 11px; }
+.routing-canvas-legend > span { display: inline-flex; align-items: center; gap: 7px; }
+.routing-canvas-legend i { display: inline-block; width: 22px; height: 1px; background: var(--primary-bd); }
+.routing-config-card { display: flex; flex-direction: column; min-height: 0; max-height: 100%; border: 1px solid var(--primary-bd); border-radius: var(--r-lg); background: var(--surface); box-shadow: var(--shadow-1); }
+.routing-config-card-scroll { min-height: 0; overflow-y: auto; border-radius: var(--r-lg) var(--r-lg) 0 0; }
+.routing-config-head { display: flex; align-items: flex-start; gap: 8px; padding: 16px 16px 12px; }
+.routing-config-head > div { flex: 1; min-width: 0; }
+.routing-config-eyebrow { color: var(--text-3); font-size: 11px; }
+.routing-config-head h2 { margin: 5px 0 0; font-size: 18px; font-weight: 600; letter-spacing: -.015em; line-height: 1.35; overflow-wrap: anywhere; }
+.routing-config-note { margin: 0; color: var(--text-3); font-size: 11.5px; line-height: 1.65; overflow-wrap: anywhere; }
+.routing-config-card-scroll > .routing-config-note { padding: 0 16px 12px; }
+.routing-config-rules { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 8px; padding: 0 16px 12px; }
+.routing-rule-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.routing-rule-wide { grid-column: 1 / -1; }
+.routing-rule-field > label { font-size: 12px; color: var(--text-2); }
+.routing-rule-field [data-slot='select-trigger'] { width: 100%; min-width: 0; font-size: 12px; }
+.routing-inherited-note { display: flex; flex-direction: column; gap: 8px; padding: 0 16px 14px; font-size: 12px; color: var(--text-3); }
+.routing-config-alias { display: flex; align-items: center; gap: 7px; margin: 0 16px 14px; padding: 6px 8px; border: 1px solid var(--hairline); border-radius: var(--r-sm); background: var(--surface-2); }
+.routing-config-alias > span { flex: none; color: var(--text-3); font-size: 11px; }
+.routing-config-alias code { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 12px; }
+.routing-group-example { margin: 0 16px 12px; }
+.routing-protection-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; margin: 0 16px 12px; padding-top: 10px; border-top: 1px solid var(--hairline); color: var(--text-3); font-size: 11px; }
+.routing-protection-summary > [data-slot='badge'] { white-space: normal; font-weight: 400; padding: 0; }
+.routing-protection-summary > button { margin-left: auto; }
+.routing-config-draft { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 12px; border-top: 1px solid var(--hairline); }
+.routing-config-draft > .right { margin-left: auto; display: flex; gap: 6px; }
+.routing-draft-state { display: flex; align-items: center; gap: 5px; color: var(--text-3); font-size: 11px; }
+.routing-config-draft.is-dirty .routing-draft-state { color: var(--warn); }
+.routing-config-draft.is-dirty .routing-draft-state::before { content: ''; width: 5px; height: 5px; flex: none; border-radius: var(--r-pill); background: currentColor; }
+.routing-config-error { margin: 0; color: var(--danger); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.routing-config-draft > .routing-config-error { width: 100%; }
+
+.routing-config-search { flex: none; max-width: none; }
+.routing-groups-hint { flex: none; margin: 0; color: var(--text-3); font-size: 11px; line-height: 1.6; }
+.routing-config-listcol { flex: 1; min-width: 0; min-height: 0; padding: 1px 3px 12px; overflow: auto; scrollbar-gutter: stable; }
+.routing-config-participants { display: flex; flex-direction: column; gap: 10px; }
+.routing-config-provider { position: relative; min-width: 0; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface); box-shadow: var(--shadow-1); }
+.routing-config-provider.is-off { border-style: dashed; background: var(--surface-2); box-shadow: none; }
+.routing-config-provider > header { display: flex; align-items: center; gap: 7px; padding: 10px 8px; }
+.routing-config-provider .routing-provider-mark { width: 26px; height: 26px; object-fit: contain; }
+.routing-provider-toggle { display: flex; flex: 1; justify-content: flex-start; align-items: center; gap: 5px; min-width: 0; height: auto; padding: 0; background: transparent; text-align: left; }
+.routing-provider-toggle:hover { background: transparent; }
+.routing-provider-toggle .routing-provider-name { flex: 1; min-width: 0; }
+.routing-provider-toggle b { display: block; font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.routing-provider-toggle small { display: block; margin-top: 4px; font-size: 11px; font-weight: 400; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.routing-provider-toggle > .ico { color: var(--text-3); transform: rotate(-90deg); }
+.routing-provider-toggle[aria-expanded='true'] > .ico { transform: none; }
+.routing-config-rank { flex: none; width: 20px; color: var(--text-3); text-align: center; font: 11px var(--font-mono); }
+.routing-config-shell .routing-grip { flex: none; width: 20px; height: 26px; padding: 0; color: var(--text-3); opacity: .6; cursor: grab; touch-action: none; }
+.routing-config-shell .routing-grip:hover, .routing-config-shell .routing-grip:focus-visible { opacity: 1; }
+.routing-config-shell .routing-grip:active { cursor: grabbing; }
+.routing-config-shell .routing-grip:disabled { cursor: default; opacity: .25; }
+.routing-more { flex: none; color: var(--text-3); }
+.routing-settings-button { flex: none; color: var(--text-2); }
+.routing-consumption-order { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 0 12px 8px; color: var(--text-3); font-size: 11px; }
+.routing-consumption-order > button { height: auto; min-height: 24px; min-width: 0; justify-content: flex-start; padding: 3px 6px; color: var(--text-2); font-size: 11px; white-space: normal; text-align: left; }
+.routing-credit-sort { min-width: 0; max-width: 100%; }
+.routing-credit-sort [data-slot='select-trigger'] { width: 100%; height: 26px; font-size: 11px; }
+.routing-config-accounts { border-top: 1px solid var(--hairline); padding: 4px 6px 6px; }
+.routing-config-account { position: relative; display: flex; align-items: center; gap: 7px; min-height: 48px; padding: 7px 2px; border-radius: var(--r-sm); }
+.routing-config-account + .routing-config-account { border-top: 1px solid var(--hairline); }
+.routing-config-account.is-excluded { color: var(--text-3); }
+.routing-config-account.is-picked { background: var(--primary-soft); }
+.routing-config-account .routing-account-avatar { width: 23px; height: 23px; font-size: 11px; }
+.routing-config-account .routing-account-rank { width: 14px; font: 11px var(--font-mono); }
+.routing-config-account-name { flex: 1; min-width: 0; }
+.routing-config-account-name b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 550; }
+.routing-config-account-name small { display: block; margin-top: 3px; color: var(--text-3); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.routing-config-account-name .routing-credit-expiry { color: var(--text-2); }
+.routing-config-account-name .routing-credit-expiry[data-soon] { color: var(--warn); }
+.routing-config-account [data-slot='badge'] { font-size: 10.5px; padding-inline: 5px; }
+.routing-config-account .routing-more { opacity: .45; }
+.routing-config-account:hover .routing-more, .routing-config-account:focus-within .routing-more { opacity: 1; }
+.routing-account-section { padding: 8px 6px 3px; font-size: 11px; color: var(--text-3); }
+.routing-config-lock { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; padding: 4px 8px; color: var(--text-3); font-size: 11px; }
+.routing-config-lock > button { margin-left: auto; }
+.routing-member-summary { display: flex; align-items: center; gap: 6px; padding: 2px 6px; color: var(--text-3); font-size: 11px; }
+.routing-member-summary button { margin-left: auto; }
+.routing-config-excluded { margin-top: 16px; }
+.routing-config-excluded .routing-config-provider { margin-bottom: 8px; }
+.routing-excluded-trigger { justify-content: flex-start; gap: 7px; width: 100%; height: auto; min-height: 30px; padding: 4px 5px; color: var(--text-3); font-size: 11.5px; }
+.routing-excluded-trigger > .ico { transform: rotate(-90deg); }
+.routing-excluded-trigger[aria-expanded='true'] > .ico { transform: none; }
+.routing-add-member { width: 100%; margin-top: 12px; }
+.routing-actions-menu { width: max-content; max-width: min(300px, calc(100vw - 24px)); padding: 5px; }
+.routing-action-item { height: auto; min-height: 30px; justify-content: flex-start; white-space: normal; text-align: left; font-size: 12px; padding: 7px 10px; }
+.routing-action-item.is-destructive { color: var(--danger); }
+.routing-config-shell .is-dragging { opacity: .45; }
+.routing-config-shell .drop-before::before, .routing-config-shell .drop-after::after { content: ''; position: absolute; left: 0; right: 0; height: 2px; background: var(--primary); border-radius: var(--r-pill); z-index: 3; pointer-events: none; }
+.routing-config-shell .drop-before::before { top: -5px; }
+.routing-config-shell .drop-after::after { bottom: -5px; }
+.routing-drag-preview { position: fixed; z-index: 10000; display: flex; flex-direction: column; gap: 6px; max-width: 300px; padding: 12px 16px; border: 1px solid var(--primary); border-radius: var(--r-md); background: var(--surface); color: var(--text); box-shadow: var(--shadow-3); pointer-events: none; font-size: 13px; }
+.routing-drag-preview span { color: var(--primary-fg); font-size: 12px; }
+
+.routing-model-filter { display: flex; flex-direction: column; gap: 6px; margin: 0 16px 12px; min-width: 0; }
+.routing-model-filter > label { font-size: 12px; color: var(--text-2); }
+.routing-model-filter-trigger { width: 100%; min-width: 0; justify-content: space-between; font-size: 12px; }
+.routing-model-filter-trigger > span { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; text-align: left; white-space: nowrap; }
+.routing-model-filter-trigger > .ico { flex: none; color: var(--text-3); }
+.routing-model-filter-popover { width: max(var(--anchor-width), 260px); max-width: min(380px, calc(100vw - 24px)); max-height: min(360px, var(--available-height)); gap: 6px; padding: 6px; }
+.routing-model-filter-popover > [data-slot='input-group'] { flex: none; }
+.routing-model-filter-options { display: flex; flex-direction: column; gap: 2px; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.routing-model-filter-option { flex: none; min-width: 0; justify-content: space-between; height: auto; min-height: 32px; padding: 7px 9px; text-align: left; white-space: normal; font-size: 12px; }
+.routing-model-filter-option > span { min-width: 0; overflow-wrap: anywhere; }
+.routing-model-filter-option > .ico { flex: none; }
+.routing-model-filter-option[aria-pressed='true'] { background: var(--primary-soft); color: var(--primary-fg); }
+
+.routing-preview { margin: 0 14px 12px; border: 1px solid var(--hairline); border-radius: var(--r-md); background: var(--surface-2); }
+.routing-preview-head { display: flex; align-items: center; gap: 2px; padding: 6px 7px 4px 10px; }
+.routing-preview-head > b { flex: 1; font-size: 12px; font-weight: 600; }
+.routing-preview-head > button { font-size: 11px; padding-inline: 4px; }
+.routing-preview-summary { padding: 0 6px; }
+.routing-preview-row { display: flex; align-items: center; gap: 7px; padding: 8px 6px; border-radius: var(--r-sm); }
+.routing-preview-row.is-first { background: var(--primary-soft); }
+.routing-preview-row-main { flex: 1; min-width: 0; }
+.routing-preview-row-main > b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 550; }
+.routing-preview-row-main > span { display: block; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); font-size: 11px; }
+.routing-preview-row > [data-slot='badge'] { font-size: 10.5px; padding-inline: 4px; }
+.routing-preview-counts { margin: 6px 6px 2px; color: var(--text-3); font-size: 11px; }
+.routing-preview-foot { padding: 7px 10px 10px; margin: 0; color: var(--text-3); font-size: 11px; line-height: 1.55; }
+.routing-preview-simulation { padding: 5px 10px 0; color: var(--warn); font-size: 11px; }
+.routing-preview-dialog { width: min(720px, calc(100vw - 40px)); }
+.routing-preview-options { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; }
+.routing-preview-toggle { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; }
+.routing-live-panel { min-width: 0; font-size: 12px; }
+.routing-live-head { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+.routing-live-head > b { font-size: 14px; }
+.routing-live-badge { display: flex; align-items: center; gap: 6px; color: var(--text-3); font-size: 11px; }
+.routing-live-model { overflow-wrap: anywhere; color: var(--text-2); }
+.routing-live-refresh { margin-left: auto; }
+.routing-live-banner { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; padding: 10px; border: 1px solid var(--warn-bd); border-radius: var(--r-sm); background: var(--surface); font-size: 11.5px; }
+.routing-live-banner > button { align-self: flex-start; }
+.routing-live-loading { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 76px; color: var(--text-3); font-size: 12px; }
+.routing-live-error { padding: 8px 4px; margin: 0; color: var(--danger); font-size: 12px; overflow-wrap: anywhere; }
+.routing-live-empty { padding: 16px 6px; margin: 0; color: var(--text-3); font-size: 12px; }
+.routing-live-summary { margin-top: 14px; padding: 12px; border: 1px solid var(--border); border-radius: var(--r-md); }
+.routing-live-eyebrow { color: var(--text-3); font-size: 11px; }
+.routing-live-name { margin-top: 5px; font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+.routing-live-name.is-empty { color: var(--danger); }
+.routing-live-reason { margin: 5px 0; color: var(--text-3); line-height: 1.6; }
+.routing-live-counts { display: flex; flex-direction: column; gap: 5px; color: var(--text-3); }
+.routing-live-subhead { display: flex; align-items: center; justify-content: space-between; margin: 18px 0 8px; color: var(--text-3); }
+.routing-live-list { display: flex; flex-direction: column; }
+.routing-live-row { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--hairline); }
+.routing-live-rank { flex: none; color: var(--text-3); font: 11px var(--font-mono); }
+.routing-live-main { min-width: 0; }
+.routing-live-title { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.routing-live-title > b { font-weight: 550; }
+.routing-live-row-reason { margin: 5px 0 0; color: var(--text-3); line-height: 1.6; }
+.routing-live-side { grid-column: 2; display: flex; flex-wrap: wrap; gap: 6px; color: var(--text-3); overflow-wrap: anywhere; }
+.routing-live-reset { color: var(--warn); }
+.routing-live-foot { margin-top: 16px; padding-top: 10px; border-top: 1px solid var(--hairline); color: var(--text-3); line-height: 1.6; }
+.routing-live-foot > p { margin: 0 0 6px; }
+.routing-model-picker { display: flex; flex-direction: column; gap: 6px; max-height: 380px; overflow: auto; padding: 6px; border: 1px solid var(--border); border-radius: var(--r-md); }
+.routing-model-option { justify-content: flex-start; height: auto; min-height: 40px; padding: 10px 12px; font-size: 13px; }
+.routing-model-option.is-selected { background: var(--primary-soft); color: var(--primary-fg); }
+.routing-model-option code { overflow: hidden; text-overflow: ellipsis; }
+.routing-model-check { margin-left: auto; }
+.routing-group-picker-row { display: flex; align-items: center; gap: 10px; padding: 12px; border: 1px solid var(--border); border-radius: var(--r-sm); }
+.routing-group-picker-row > div { flex: 1; min-width: 0; }
+.routing-group-picker-row b { display: block; font-size: 13px; }
+.routing-group-picker-row small { display: block; margin-top: 5px; color: var(--text-3); font-size: 12px; overflow-wrap: anywhere; }
+.routing-group-form { display: flex; flex-direction: column; gap: 16px; }
+.routing-group-form label { font-size: 13px; }
+.routing-group-code { max-height: 300px; overflow: auto; padding: 16px; border-radius: var(--r-sm); background: var(--surface-2); font: 12px/1.6 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.routing-create-dialog { width: min(880px, calc(100vw - 40px)); }
+.routing-create-dialog [data-slot='dialog-body'] { gap: 12px; }
+.routing-create-dialog .routing-group-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; }
+.routing-create-dialog .routing-group-form label { font-size: 12px; }
+.routing-single-model { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 10px 12px; border: 1px solid transparent; border-radius: var(--r-sm); cursor: pointer; }
+.routing-single-model:hover { background: var(--surface-2); }
+.routing-single-model[data-checked] { border-color: var(--primary-bd); background: var(--primary-soft); color: var(--primary-fg); }
+.routing-single-model > span:last-child { min-width: 0; overflow-wrap: anywhere; font-size: 12.5px; font-weight: 500; }
+.routing-model-selection { min-width: 0; }
+.routing-model-columns { display: grid; grid-template-columns: 220px minmax(0, 1fr); height: clamp(240px, 34vh, 360px); overflow: hidden; border: 1px solid var(--border); border-radius: var(--r-md); }
+.routing-model-providers, .routing-model-choices { display: flex; flex-direction: column; gap: 10px; min-width: 0; min-height: 0; padding: 10px; }
+.routing-model-providers { background: var(--rail-bg); border-right: 1px solid var(--hairline); }
+.routing-model-providers > input, .routing-model-choices > input { flex: none; font-size: 12px; }
+.routing-model-provider-list { flex: 1; overflow-y: auto; --ui-selection-bg: var(--primary-soft); --ui-selection-border: transparent; }
+.routing-model-provider-list > [data-slot='nav-item'] { flex: none; min-width: 0; padding: 9px 7px; font-size: 12px; }
+.routing-model-provider-list .routing-provider-mark { width: 22px; height: 22px; }
+.routing-model-provider-list [data-slot='badge'] { font-size: 10px; }
+.routing-model-choices-head { display: flex; align-items: center; gap: 8px; color: var(--text-3); font-size: 11px; }
+.routing-model-choices-head > b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); font-size: 12.5px; font-weight: 600; }
+.routing-model-choice-list { display: flex; flex: 1; min-height: 0; flex-direction: column; gap: 6px; overflow-y: auto; }
+.routing-model-choice-list .routing-group-picker-row { flex: none; padding: 10px; cursor: pointer; }
+.routing-model-choice-list .routing-group-picker-row[data-checked] { background: var(--primary-soft); border-color: var(--primary-bd); }
+.routing-model-choice-list .routing-group-picker-row b { font-size: 12.5px; overflow-wrap: anywhere; }
+.routing-model-choice-list .routing-group-picker-row small { margin-top: 3px; font-size: 11px; }
+.routing-model-choice-list [data-slot='badge'] { font-size: 10.5px; white-space: normal; }
+.routing-model-selection-summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 6px; color: var(--text-3); font-size: 11.5px; }
+
+@container routing (max-width: 1120px) {
+  .routing-config-shell { grid-template-columns: 186px minmax(0, 1fr); gap: 16px; }
+  .routing-canvas { grid-template-columns: minmax(260px, 290px) minmax(0, 1fr); column-gap: 32px; }
+  .routing-config-provider > header { gap: 5px; padding-inline: 6px; }
+  .routing-config-account { gap: 5px; }
+  .routing-config-account .routing-account-avatar { display: none; }
+}
+@container routing (max-width: 900px) {
+  .routing-canvas { display: flex; flex-direction: column; overflow-y: auto; gap: 18px; }
+  .routing-canvas-edges, .routing-canvas-legend { display: none; }
+  .routing-config-column, .routing-groups-column { flex: none; min-height: auto; }
+  .routing-config-card { max-height: none; }
+  .routing-config-card-scroll, .routing-config-listcol { overflow: visible; }
+}
+@media (max-width: 767px) {
+  .routing-create-dialog .routing-group-form { grid-template-columns: minmax(0, 1fr); }
+  .routing-model-columns { grid-template-columns: minmax(120px, 34%) minmax(0, 1fr); }
+  .routing-model-providers, .routing-model-choices { padding: 7px; }
+  .routing-model-provider-list .routing-provider-mark { display: none; }
+  .routing-model-choice-list .routing-group-picker-row { gap: 7px; padding: 8px; }
+  .routing-model-choice-list .routing-group-picker-row > [data-slot='badge'] { display: none; }
+  .routing-config-shell { display: flex; flex-direction: column; gap: 12px; overflow: auto; }
+  .routing-config-rail { flex: none; max-height: 300px; }
+  .routing-canvas { display: flex; flex: none; flex-direction: column; gap: 18px; overflow: visible; }
+  .routing-config-column, .routing-groups-column { min-height: auto; }
+  .routing-config-card-scroll, .routing-config-listcol { overflow: visible; }
+  .routing-config-provider > header { flex-wrap: wrap; }
+  .routing-config-account-name { min-width: 80px; }
+  .routing-config-account .routing-account-avatar { display: none; }
+  .routing-canvas-edges, .routing-canvas-legend { display: none; }
+}

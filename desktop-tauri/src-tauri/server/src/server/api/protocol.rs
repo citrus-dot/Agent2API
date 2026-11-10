@@ -34,6 +34,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use serde_json::{json, Value};
 
+use crate::server::core::compact_routing::{self, RequestFormat};
 use crate::server::core::key_scope::KeyScope;
 use crate::server::core::protocol::{anthropic, responses};
 use crate::server::core::upstream::cancellation;
@@ -58,12 +59,12 @@ fn parse_object(
     started_at: i64,
     path: &str,
     body: &Bytes,
-    client: &str,
+    source: &crate::server::request_stats::RequestSource,
 ) -> Result<Value, Response> {
     let parsed = serde_json::from_slice::<Value>(body).ok();
     let Some(payload) = parsed.filter(Value::is_object) else {
         let error = GatewayError::bad_request("请求体必须是 JSON 对象");
-        record_early_failure(state, started_at, "", "", client, &error);
+        record_early_failure(state, started_at, "", "", source, &error);
         logging::verbose("[Model]", &format!("← POST {path} 请求体不是 JSON 对象"));
         return Err(error.payload_response());
     };
@@ -145,17 +146,20 @@ pub async fn responses_endpoint(
     // `core::key_scope` 模块头）。用 `Option<Extension<_>>` 而不是裸
     // `Extension<_>` —— 后者在免鉴权模式下取不到会直接拒绝请求。
     key_scope: Option<Extension<KeyScope>>,
+    key_identity: Option<Extension<crate::server::request_stats::ApiKeyIdentity>>,
     body: Bytes,
 ) -> Response {
     let scope = key_scope.map(|Extension(scope)| scope);
     let started_at = logging::now_ms();
     // 请求来源客户端（UA 识别，见 `core::client`）：早失败路径与收尾记账共用
-    let client = crate::server::core::client::classify(&pipeline::user_agent_of(&headers));
+    let source = pipeline::request_source(&headers, key_identity);
     let path = "/v1/responses";
-    let raw = match parse_object(&state, started_at, path, &body, &client) {
+    let raw = match parse_object(&state, started_at, path, &body, &source) {
         Ok(value) => value,
         Err(response) => return response,
     };
+    // 协议翻译前识别，保留原始文本块边界。
+    let compact_client = compact_routing::client_for_request(&source.behavior_client, &raw, RequestFormat::Responses);
     // 原始请求体留一份：回程要用它回显请求侧字段（instructions / tools / …），
     // 而下面会把 payload 改写成 Chat 形态
     let original = raw.clone();
@@ -170,7 +174,7 @@ pub async fn responses_endpoint(
         Ok(body) => body,
         Err(message) => {
             let error = GatewayError::bad_request(message);
-            record_early_failure(&state, started_at, &pipeline::model_field_text(&raw), &client_reasoning, &client, &error);
+            record_early_failure(&state, started_at, &pipeline::model_field_text(&raw), &client_reasoning, &source, &error);
             return error.payload_response();
         }
     };
@@ -180,16 +184,16 @@ pub async fn responses_endpoint(
         .unwrap_or(false)
     {
         let error = GatewayError::bad_request("input 必须能转换成对话消息");
-        record_early_failure(&state, started_at, "", &client_reasoning, &client, &error);
+        record_early_failure(&state, started_at, "", &client_reasoning, &source, &error);
         return error.payload_response();
     }
 
     // 模型解析走公共管道（默认模型回落 / 别名映射 / 目录校验）。
     // 第三参是这把 Key 的可用模型白名单（None = 不限制），同 /v1/chat/completions
-    let requested_model = match pipeline::resolve_model(&state, &mut chat_body, scope.as_ref()) {
+    let requested_model = match super::request_prepare::resolve_client_model(&state, &mut chat_body, scope.as_ref(), compact_client).await {
         Ok(model) => model,
         Err(error) => {
-            record_early_failure(&state, started_at, &pipeline::model_field_text(&raw), &client_reasoning, &client, &error);
+            record_early_failure(&state, started_at, &pipeline::model_field_text(&raw), &client_reasoning, &source, &error);
             return error.payload_response();
         }
     };
@@ -214,16 +218,16 @@ pub async fn responses_endpoint(
     // 「进行中」行（与 /v1/chat/completions 同一处时点：模型解析成功、
     // 转发开始前；生命周期见 `RequestStats::record_started`）
     let telemetry_id = telemetry.snapshot().id;
-    state.request_stats().record_started(
+    super::request_prepare::record_started(
+        state.request_stats(),
         &telemetry_id,
         started_at,
         &requested_model,
         &client_model,
         &client_reasoning,
-        &client,
-        // 真实流量：不是模型测试（见 `RecordContext::is_test`）
+        &source,
         false,
-    );
+    ).await;
     // 在途回写（与 /v1/chat/completions 同一处时点与理由，见
     // `pipeline::live_row_sink`）
     telemetry.set_live_sink(pipeline::live_row_sink(
@@ -265,7 +269,7 @@ pub async fn responses_endpoint(
         // 真实流量：不是模型测试（见 `RecordContext::is_test`）
         is_test: false,
         // 来源客户端：入口判好带进来（见 `RecordContext::client`）
-        client: client.clone(),
+        source: source.clone(),
     };
 
     match outcome {
@@ -342,25 +346,27 @@ pub async fn messages_endpoint(
     headers: HeaderMap,
     // R9：同 responses_endpoint（`Option` + 取不到 = 不限制）
     key_scope: Option<Extension<KeyScope>>,
+    key_identity: Option<Extension<crate::server::request_stats::ApiKeyIdentity>>,
     body: Bytes,
 ) -> Response {
     let scope = key_scope.map(|Extension(scope)| scope);
     let started_at = logging::now_ms();
     // 请求来源客户端（UA 识别，见 `core::client`）：早失败路径与收尾记账共用
-    let client = crate::server::core::client::classify(&pipeline::user_agent_of(&headers));
+    let source = pipeline::request_source(&headers, key_identity);
     let path = "/v1/messages";
-    let raw = match parse_object(&state, started_at, path, &body, &client) {
+    let raw = match parse_object(&state, started_at, path, &body, &source) {
         Ok(value) => value,
         Err(response) => return response,
     };
     let stream = raw.get("stream").and_then(Value::as_bool).unwrap_or(false);
 
+    let compact_client = compact_routing::client_for_request(&source.behavior_client, &raw, RequestFormat::Anthropic);
     // 协议翻译
     let mut chat_body = match anthropic::chat_from_anthropic(&raw) {
         Ok(body) => body,
         Err(message) => {
             let error = GatewayError::bad_request(message);
-            record_early_failure(&state, started_at, &pipeline::model_field_text(&raw), "", &client, &error);
+            record_early_failure(&state, started_at, &pipeline::model_field_text(&raw), "", &source, &error);
             return anthropic_error_response(&error);
         }
     };
@@ -368,10 +374,10 @@ pub async fn messages_endpoint(
     // 下游等级从**翻译后的 chat 体**读：Anthropic 的 thinking/output_config →
     // reasoning_effort 是网关自己的映射（anthropic_effort），比通用并集链更准
     let client_reasoning = pipeline::client_reasoning_of(&chat_body);
-    let requested_model = match pipeline::resolve_model(&state, &mut chat_body, scope.as_ref()) {
+    let requested_model = match super::request_prepare::resolve_client_model(&state, &mut chat_body, scope.as_ref(), compact_client).await {
         Ok(model) => model,
         Err(error) => {
-            record_early_failure(&state, started_at, &pipeline::model_field_text(&raw), &client_reasoning, &client, &error);
+            record_early_failure(&state, started_at, &pipeline::model_field_text(&raw), &client_reasoning, &source, &error);
             return anthropic_error_response(&error);
         }
     };
@@ -392,19 +398,23 @@ pub async fn messages_endpoint(
     // 转发开始前插入）
     let telemetry = Arc::new(RequestTelemetry::with_id());
     let client_model = pipeline::model_field_text(&raw);
+    // 流式 `message_start` 的输入锚点：上游 usage 要等流末尾那帧才到，先按
+    // 请求体估算一个（口径同 `/v1/messages/count_tokens`，见 issue #437）。
+    // 必须在这里算 —— `chat_body` 下面会被 move 进 `forward_chat`。
+    let input_estimate = anthropic::estimate_tokens_for_body(&chat_body);
     // 「进行中」行（与 /v1/chat/completions 同一处时点：模型解析成功、
     // 转发开始前；生命周期见 `RequestStats::record_started`）
     let telemetry_id = telemetry.snapshot().id;
-    state.request_stats().record_started(
+    super::request_prepare::record_started(
+        state.request_stats(),
         &telemetry_id,
         started_at,
         &requested_model,
         &client_model,
         &client_reasoning,
-        &client,
-        // 真实流量：不是模型测试（见 `RecordContext::is_test`）
+        &source,
         false,
-    );
+    ).await;
     // 在途回写（与 /v1/chat/completions 同一处时点与理由，见
     // `pipeline::live_row_sink`）
     telemetry.set_live_sink(pipeline::live_row_sink(
@@ -446,7 +456,7 @@ pub async fn messages_endpoint(
         // 真实流量：不是模型测试（见 `RecordContext::is_test`）
         is_test: false,
         // 来源客户端：入口判好带进来（见 `RecordContext::client`）
-        client: client.clone(),
+        source: source.clone(),
     };
 
     match outcome {
@@ -455,7 +465,7 @@ pub async fn messages_endpoint(
             let model = requested_model.clone();
             let context = RecordContext { status: i64::from(status.as_u16()), ..context };
             if stream {
-                let mut machine = anthropic::AnthropicStream::new(&model);
+                let mut machine = anthropic::AnthropicStream::new(&model, Some(input_estimate));
                 let transformed = pipeline::transformed_stream(
                     source,
                     context,
